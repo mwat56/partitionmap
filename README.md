@@ -36,7 +36,7 @@ You can use `Go` to install this package for you:
 
 The following external libraries were used building `partitionmap`:
 
-* [ApacheLogger](https://github.com/mwat56/apachelogger)
+* 
 
 ## Licence
 

@@ -1,6 +1,6 @@
 /*
 
-Package partitionmap implements ...
+Package partitionmap implements a partitiones map to store key/value pairs.
 
     Copyright © 2024 M.Watermann, 10247 Berlin, Germany
                     All rights reserved
