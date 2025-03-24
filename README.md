@@ -1,4 +1,4 @@
-# partitionmap
+# PartitionMap
 
 [![golang](https://img.shields.io/badge/Language-Go-green.svg)](https://golang.org/)
 [![GoDoc](https://godoc.org/github.com/mwat56/partitionmap?status.svg)](https://godoc.org/github.com/mwat56/partitionmap)
@@ -9,7 +9,7 @@
 [![View examples](https://img.shields.io/badge/learn%20by-examples-0077b3.svg)](https://github.com/mwat56/partitionmap/blob/main/_demo/demo.go)
 [![License](https://img.shields.io/github/mwat56/partitionmap.svg)](https://github.com/mwat56/partitionmap/blob/main/LICENSE)
 
-- [partitionmap](#xxx)
+- [PartitionMap](#partitionmap)
 	- [Purpose](#purpose)
 	- [Installation](#installation)
 	- [Usage](#usage)
@@ -36,11 +36,11 @@ You can use `Go` to install this package for you:
 
 The following external libraries were used building `partitionmap`:
 
-* 
+* _No external libraries are used by this module._
 
 ## Licence
 
-        Copyright © 2024 M.Watermann, 10247 Berlin, Germany
+        Copyright © 2024, 2025  M.Watermann, 10247 Berlin, Germany
                         All rights reserved
                     EMail : <support@mwat.de>
 
