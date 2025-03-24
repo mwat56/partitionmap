@@ -1,5 +1,5 @@
 /*
-Copyright © 2024  M.Watermann, 10247 Berlin, Germany
+Copyright © 2024, 2025  M.Watermann, 10247 Berlin, Germany
 
 			All rights reserved
 		EMail : <support@mwat.de>
@@ -50,7 +50,7 @@ type (
 // `tPartition` instance.
 //
 // The returned partition is initialised with a read-write mutex and
-// an empty map (map[string]V).
+// an empty map (tKeyMap[V]).
 //
 // Example usage:
 //
@@ -62,7 +62,7 @@ type (
 func newPartition[V any]() *tPartition[V] {
 	p := &tPartition[V]{
 		mtx: new(sync.RWMutex),
-		kv:  make(map[string]V),
+		kv:  make(tKeyMap[V]),
 	}
 
 	return p
@@ -95,7 +95,7 @@ func (p *tPartition[V]) del(aKey string) *tPartition[V] {
 	return p
 } // del()
 
-// `get()` retrieves a key-value pair from the partition.
+// `get()` retrieves a key/value pair from the partition.
 //
 // This method is used to fetch the value associated with a given
 // key from the partition.
@@ -143,7 +143,7 @@ func (p tPartition[V]) keys() (rKeys []string) {
 // If the key already exists, it will be updated.
 //
 // Parameters:
-//   - `aKey`: The key to be put into the partition.
+//   - `aKey`: The key to be store in the partition.
 //   - `aValue`: The value associated with the key.
 //
 // Returns:
@@ -198,7 +198,7 @@ func NewPartitionMap[V any]() *TPartitionMap[V] {
 var (
 	// `crc32Table`: To avoid (re-)allocation with every call
 	// to `partitionIndex()` we create it here once.
-	crc32Table = crc32.MakeTable(crc32.Castagnoli)
+	gCrc32Table = crc32.MakeTable(crc32.Castagnoli)
 )
 
 // --------------------------------------------------------------------
@@ -226,7 +226,7 @@ func (pm TPartitionMap[V]) partitionIndex(aKey string) (rIdx uint32) {
 	// keys, the only consequence would be that both keys end up in the
 	// same partition: So what?
 
-	cs32 := crc32.Checksum([]byte(aKey), crc32Table)
+	cs32 := crc32.Checksum([]byte(aKey), gCrc32Table)
 	rIdx = cs32 % numberOfPartitionsInPartitionMap
 
 	return
@@ -237,8 +237,10 @@ func (pm TPartitionMap[V]) partitionIndex(aKey string) (rIdx uint32) {
 //
 // If the partition already exists, it is returned along with a boolean
 // value indicating its existence.
+//
 // If the partition does not exist and the create parameter is set to
 // `true`, a new partition is created and returned.
+//
 // If the partition does not exist and the create parameter is set to
 // `false`, the method returns `nil` and a boolean value of `false`.
 //
@@ -247,8 +249,8 @@ func (pm TPartitionMap[V]) partitionIndex(aKey string) (rIdx uint32) {
 //   - `aCreate`: A boolean value indicating whether a new partition for the given key should be created if it does not exist.
 //
 // Returns:
-//   - `*tPartition[V]`: The partition associated with the provided key, or nil if the partition does not exist and aCreate is false.
-//   - `bool`: A boolean value indicating whether the partition was successful.
+//   - `*tPartition[V]`: The partition associated with the provided key, or `nil` if the partition does not exist and `aCreate` is `false`.
+//   - `bool`: A boolean value indicating whether the partition was successfully retrieved.
 func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V], bool) {
 	if nil == pm {
 		return nil, false
@@ -264,12 +266,12 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 		return nil, false
 	}
 
-	// Here we do the lazy initialisation of the required `tPartition`
+	// Here we do the lazy initialisation of the required `tPartition`:
 	p = newPartition[V]()
 	(*pm)[idx] = p
 
 	return p, true
-} // partition
+} // partition()
 
 //
 // CRUD interface
