@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -97,9 +96,9 @@ func Test_tPartition_del_ReturnsSamePartitionWhenKeyDoesNotExist(t *testing.T) {
 	}{
 		{
 			name:      "Partition is not nil",
-			partition: &tPartition[int]{mtx: &sync.RWMutex{}, kv: make(map[string]int)},
+			partition: &tPartition[int]{kv: make(map[string]int)},
 			args:      args{aKey: "key1"},
-			want:      &tPartition[int]{mtx: &sync.RWMutex{}, kv: make(map[string]int)},
+			want:      &tPartition[int]{kv: make(map[string]int)},
 		},
 		{
 			name:      "Partition is nil",
@@ -138,12 +137,12 @@ func Test_tPartition_get(t *testing.T) {
 			val, ok)
 	}
 
-	// // Test with nil partition
-	// var nilPartition *tPartition[int]
-	// val, ok = nilPartition.get("anyKey")
-	// if ok || val != 0 {
-	// 	t.Errorf("get() with nil partition = %v, %v; want 0, false", val, ok)
-	// }
+	// Test with nil partition
+	var nilPartition *tPartition[int]
+	val, ok = nilPartition.get("anyKey")
+	if ok || val != 0 {
+		t.Errorf("get() with nil partition = %v, %v; want 0, false", val, ok)
+	}
 } // Test_tPartition_get()
 
 func Test_tPartition_get_ReturnsEmptyValueAndFalseWhenKeyDoesNotExist(t *testing.T) {
@@ -381,10 +380,7 @@ func Test_TPartitionMap_partition(t *testing.T) {
 			// Additional check: if we created a partition,
 			// verify it's properly initialised.
 			if found && !tc.wantNil {
-				if partition.mtx == nil {
-					t.Errorf("partition() returned partition with nil mutex")
-				}
-				if partition.kv == nil {
+				if nil == partition.kv {
 					t.Errorf("partition() returned partition with nil map")
 				}
 			}
@@ -470,13 +466,13 @@ func Test_TPartitionMap_Get(t *testing.T) {
 			wantValue: 0,
 			wantFound: false,
 		},
-		// {
-		// 	name:      "Nil partition map",
-		// 	pm:        nil,
-		// 	args:      tArgs{aKey: "anyKey"},
-		// 	wantValue: 0,
-		// 	wantFound: false,
-		// },
+		{
+			name:      "Nil partition map",
+			pm:        nil,
+			key:       "anyKey",
+			wantValue: 0,
+			wantFound: false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -513,11 +509,11 @@ func Test_TPartitionMap_Keys(t *testing.T) {
 				Put("key3", 300),
 			want: []string{"key1", "key2", "key3"},
 		},
-		// {
-		// 	name: "Nil partition map",
-		// 	pm:   nil,
-		// 	want: nil,
-		// },
+		{
+			name: "Nil partition map",
+			pm:   nil,
+			want: nil,
+		},
 	}
 
 	for _, tc := range tests {
@@ -555,11 +551,11 @@ func Test_TPartitionMap_Len(t *testing.T) {
 				Put("key3", 300),
 			want: 3,
 		},
-		// {
-		// 	name: "Nil partition map",
-		// 	pm:   nil,
-		// 	want: 0,
-		// },
+		{
+			name: "Nil partition map",
+			pm:   nil,
+			want: 0,
+		},
 	}
 
 	for _, tc := range tests {
@@ -657,11 +653,11 @@ func Test_TPartitionMap_String(t *testing.T) {
 				Put("key3", 300),
 			want: "key1: `100`\nkey2: '200'\nkey3: '300'\n", // Assuming this format from tPartition.String()
 		},
-		// {
-		// 	name: "Nil partition map",
-		// 	pm:   nil,
-		// 	want: "",
-		// },
+		{
+			name: "Nil partition map",
+			pm:   nil,
+			want: "",
+		},
 	}
 
 	for _, tc := range tests {

@@ -28,8 +28,8 @@ type (
 
 	// `tPartition` implements a single partition in a `tPartitionList`
 	tPartition[V any] struct {
-		mtx *sync.RWMutex
-		kv  tKeyMap[V] // the final key/value store
+		sync.RWMutex
+		kv tKeyMap[V] // the final key/value store
 	}
 
 	// `tPartitionList` is a slice of `tPartition` instances.
@@ -63,8 +63,7 @@ type (
 //	fmt.Println(value, ok) // Output: 10 true
 func newPartition[V any]() *tPartition[V] {
 	p := &tPartition[V]{
-		mtx: new(sync.RWMutex),
-		kv:  make(tKeyMap[V]),
+		kv: make(tKeyMap[V]),
 	}
 
 	return p
@@ -87,12 +86,10 @@ func (p *tPartition[V]) del(aKey string) *tPartition[V] {
 	if nil == p {
 		return p
 	}
-	p.mtx.Lock()
-	defer p.mtx.Unlock()
+	p.Lock()
+	defer p.Unlock()
 
-	if _, ok := p.kv[aKey]; ok {
-		delete((*p).kv, aKey)
-	}
+	delete(p.kv, aKey)
 
 	return p
 } // del()
@@ -113,9 +110,12 @@ func (p *tPartition[V]) del(aKey string) *tPartition[V] {
 // Returns:
 //   - `V`: The value associated with the key (if found).
 //   - `bool`: Indicating whether the key was found.
-func (p tPartition[V]) get(aKey string) (rVal V, rOk bool) {
-	p.mtx.RLock()
-	defer p.mtx.RUnlock()
+func (p *tPartition[V]) get(aKey string) (rVal V, rOk bool) {
+	if nil == p {
+		return
+	}
+	p.RLock()
+	defer p.RUnlock()
 
 	rVal, rOk = p.kv[aKey]
 
@@ -129,9 +129,12 @@ func (p tPartition[V]) get(aKey string) (rVal V, rOk bool) {
 //
 // Returns:
 //   - `[]string`: A slice of the keys in the current partition.
-func (p tPartition[V]) keys() (rKeys []string) {
-	p.mtx.RLock()
-	defer p.mtx.RUnlock()
+func (p *tPartition[V]) keys() (rKeys []string) {
+	if nil == p {
+		return
+	}
+	p.RLock()
+	defer p.RUnlock()
 
 	for k := range p.kv {
 		rKeys = append(rKeys, k)
@@ -154,8 +157,8 @@ func (p *tPartition[V]) put(aKey string, aVal V) *tPartition[V] {
 	if nil == p {
 		return p
 	}
-	p.mtx.Lock()
-	defer p.mtx.Unlock()
+	p.Lock()
+	defer p.Unlock()
 
 	p.kv[aKey] = aVal
 
@@ -170,8 +173,11 @@ func (p *tPartition[V]) put(aKey string, aVal V) *tPartition[V] {
 //
 // Returns:
 //   - `string`: A string representation of the partition.
-func (p tPartition[V]) String() string {
-	p.mtx.RLock()
+func (p *tPartition[V]) String() string {
+	if nil == p {
+		return ""
+	}
+	p.RLock()
 	// Get keys while holding the lock
 	keys := make([]string, 0, len(p.kv))
 	for k := range p.kv {
@@ -183,7 +189,7 @@ func (p tPartition[V]) String() string {
 	for _, k := range keys {
 		values[k] = p.kv[k]
 	}
-	p.mtx.RUnlock()
+	p.RUnlock()
 
 	// Process outside the lock
 	slices.Sort(keys)
@@ -247,7 +253,10 @@ var (
 //
 // Returns:
 //   - `uint32`: The partition index to use for the given key.
-func (pm TPartitionMap[V]) partitionIndex(aKey string) (rIdx uint32) {
+func (pm *TPartitionMap[V]) partitionIndex(aKey string) (rIdx uint32) {
+	if nil == pm {
+		return
+	}
 	// SHA-512 has a very low chance of collisions. For small data sizes
 	// up to 255 bytes, SHA-256 is typically faster than SHA-512 on 32-bit
 	// systems. However, on 64-bit systems, SHA-512 can be faster than
@@ -324,7 +333,7 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 //   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
 func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
 	if nil == pm {
-		return pm
+		return nil
 	}
 	if p, ok := pm.partition(aKey, false); ok {
 		p.del(aKey)
@@ -346,7 +355,7 @@ func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
 // Returns:
 //   - `V`: The value associated with the key ()if found).
 //   - `bool`: Indicating for whether the key was found.
-func (pm TPartitionMap[V]) Get(aKey string) (V, bool) {
+func (pm *TPartitionMap[V]) Get(aKey string) (V, bool) {
 	var zeroVal V
 	if nil == pm {
 		return zeroVal, false
@@ -370,20 +379,24 @@ func (pm TPartitionMap[V]) Get(aKey string) (V, bool) {
 //
 // Return:
 //   - `[]string`: A slice of all the keys in the current partition map.
-func (pm TPartitionMap[V]) Keys() []string {
+func (pm *TPartitionMap[V]) Keys() []string {
+	if nil == pm {
+		return nil
+	}
+
 	// Pre-allocate to avoid multiple reallocations
 	totalKeys := 0
-	for _, p := range pm {
+	for _, p := range *pm {
 		if nil != p {
-			p.mtx.RLock()
+			p.RLock()
 			totalKeys += len(p.kv)
-			p.mtx.RUnlock()
+			p.RUnlock()
 		}
 	}
 	result := make([]string, 0, totalKeys)
 
 	// Collect all keys
-	for _, p := range pm {
+	for _, p := range *pm {
 		if nil != p {
 			result = append(result, p.keys()...)
 		}
@@ -398,12 +411,15 @@ func (pm TPartitionMap[V]) Keys() []string {
 //
 // Returns:
 //   - `rLen int`: The number of all key/value pairs in the partition map.
-func (pm TPartitionMap[V]) Len() (rLen int) {
-	for _, p := range pm {
+func (pm *TPartitionMap[V]) Len() (rLen int) {
+	if nil == pm {
+		return
+	}
+	for _, p := range *pm {
 		if nil != p {
-			p.mtx.RLock()
+			p.RLock()
 			rLen += len(p.kv)
-			p.mtx.RUnlock()
+			p.RUnlock()
 		}
 	}
 
@@ -421,7 +437,7 @@ func (pm TPartitionMap[V]) Len() (rLen int) {
 //   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
 func (pm *TPartitionMap[V]) Put(aKey string, aValue V) *TPartitionMap[V] {
 	if nil == pm {
-		return pm
+		return nil
 	}
 	if p, ok := pm.partition(aKey, true); ok {
 		// Store the key/value pair in the partition
@@ -439,13 +455,13 @@ func (pm *TPartitionMap[V]) Put(aKey string, aValue V) *TPartitionMap[V] {
 //
 // Return:
 //   - `string`: A string representation of the partition map.
-func (pm TPartitionMap[V]) String() string {
+func (pm *TPartitionMap[V]) String() string {
 	if nil == pm {
 		return ""
 	}
 
 	var builder strings.Builder
-	for _, p := range pm {
+	for _, p := range *pm {
 		if nil != p {
 			builder.WriteString(p.String())
 		}
