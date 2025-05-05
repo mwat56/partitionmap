@@ -18,7 +18,7 @@ import (
 
 const (
 	// The number of partitions to use for the key/value pairs.
-	numberOfPartitionsInPartitionMap = 64 // within byte range
+	numberOfPartitionsInMap = 64 // well within byte range
 )
 
 type (
@@ -59,6 +59,9 @@ type (
 //	partition.put("key2", 20)
 //	value, ok := partition.get("key1")
 //	fmt.Println(value, ok) // Output: 10 true
+//
+// Returns:
+//   - `*tPartition[V]`: A pointer to a newly created partition.
 func newPartition[V any]() *tPartition[V] {
 	p := &tPartition[V]{
 		kv: make(tKeyMap[V]),
@@ -78,7 +81,6 @@ func (p *tPartition[V]) clear() *tPartition[V] {
 	if nil == p {
 		return nil
 	}
-
 	p.Lock()
 	defer p.Unlock()
 
@@ -240,13 +242,9 @@ func (p *tPartition[V]) String() string {
 
 	// Get keys while holding the lock
 	keys := make([]string, 0, len(p.kv))
+	values := make(map[string]V, len(p.kv))
 	for k := range p.kv {
 		keys = append(keys, k)
-	}
-
-	// Get values while still holding the lock
-	values := make(map[string]V, len(keys))
-	for _, k := range keys {
 		values[k] = p.kv[k]
 	}
 	p.RUnlock()
@@ -265,7 +263,7 @@ func (p *tPartition[V]) String() string {
 // ---------------------------------------------------------------------------
 // `TPartitionMap` constructor:
 
-// `NewPartitionMap()` creates and initialises a new partition map.
+// `New()` creates and initialises a new partition map.
 //
 // This function is a constructor that returns a pointer to a new
 // `TPartitionMap` instance with the specified value type.
@@ -276,32 +274,35 @@ func (p *tPartition[V]) String() string {
 //
 // Example usage:
 //
-//	pm := NewPartitionMap[string]()
+//	pm := New[string]()
 //	pm.Put("key1", "value1")
 //	value, exists := pm.Get("key1")
 //
 // Returns:
-//   - `*TPartitionMap[V]`: A pointer to the newly created partition map.
-func NewPartitionMap[V any]() *TPartitionMap[V] {
+//   - `*TPartitionMap[V]`: A pointer to a newly created partition map.
+func New[V any]() *TPartitionMap[V] {
 	// Unfortunately, Go doesn't support the use of sparse arrays
 	// (i.e. slices). That forces us to initialise the whole list
 	// at once. With 64 possible values/indices that takes 512 bytes.
-	result := make(TPartitionMap[V], numberOfPartitionsInPartitionMap)
+	//
+	// An empty map is allocated with enough space to hold the
+	// specified number of elements.
+	result := make(TPartitionMap[V], numberOfPartitionsInMap)
 
 	// Leave the partitions to lazy/late initialisation;
-	// see `partition()`.
+	// see `TPartitionMap.partition()`.
 
 	return &result
-} // NewPartitionMap()
+} // New()
+
+// ---------------------------------------------------------------------------
+// `TPartitionMap` methods:
 
 var (
 	// `crc32Table`: To avoid (re-)allocation with every call
 	// to `partitionIndex()` we create it here once.
 	gCrc32Table = crc32.MakeTable(crc32.Castagnoli)
 )
-
-// ---------------------------------------------------------------------------
-// `TPartitionMap` methods:
 
 // `partitionIndex()` computes the partition index for a given key.
 // It uses the CRC32 algorithm to generate a hash value for the key,
@@ -329,7 +330,7 @@ func (pm *TPartitionMap[V]) partitionIndex(aKey string) (rIdx uint32) {
 	// same partition: So what?
 
 	cs32 := crc32.Checksum([]byte(aKey), gCrc32Table)
-	rIdx = cs32 % numberOfPartitionsInPartitionMap
+	rIdx = cs32 % numberOfPartitionsInMap
 
 	return
 } // partitionIndex()
@@ -340,15 +341,15 @@ func (pm *TPartitionMap[V]) partitionIndex(aKey string) (rIdx uint32) {
 // If the partition already exists, it is returned along with a boolean
 // value indicating its existence.
 //
-// If the partition does not exist and the create parameter is set to
+// If the partition doesn't exist yet and the create parameter is set to
 // `true`, a new partition is created and returned.
 //
-// If the partition does not exist and the create parameter is set to
+// If the partition doesn't exist and the create parameter is set to
 // `false`, the method returns `nil` and a boolean value of `false`.
 //
 // Parameters:
 //   - `aKey`: The key used to identify the partition.
-//   - `aCreate`: A boolean value indicating whether a new partition for the given key should be created if it does not exist.
+//   - `aCreate`: A boolean value indicating whether a new partition for the given key should be created if it doesn't exist yet.
 //
 // Returns:
 //   - `*tPartition[V]`: The partition associated with the provided key, or `nil` if the partition does not exist and `aCreate` is `false`.
@@ -550,9 +551,7 @@ func (pm *TPartitionMap[V]) String() string {
 
 	var builder strings.Builder
 	for _, p := range *pm {
-		if nil != p {
-			builder.WriteString(p.String())
-		}
+		builder.WriteString(p.String())
 	}
 
 	return builder.String()
