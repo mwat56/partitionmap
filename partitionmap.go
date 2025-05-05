@@ -1,23 +1,25 @@
 /*
 Copyright © 2024, 2025  M.Watermann, 10247 Berlin, Germany
 
-			All rights reserved
-		EMail : <support@mwat.de>
+	    All rights reserved
+	EMail : <support@mwat.de>
 */
-
 package partitionmap
 
 import (
 	"fmt"
 	"hash/crc32"
 	"slices"
+	"strings"
 	"sync"
 )
 
 //lint:file-ignore ST1017 - I prefer Yoda conditions
 
-// The number of partitions to use for the key/value pairs.
-const numberOfPartitionsInPartitionMap = 64 // within byte range
+const (
+	// The number of partitions to use for the key/value pairs.
+	numberOfPartitionsInPartitionMap = 64 // within byte range
+)
 
 type (
 	// `tKeyMap` contains a partition's key/value pairs
@@ -39,8 +41,8 @@ type (
 	TPartitionMap[V any] tPartitionList[V]
 )
 
-// --------------------------------------------------------------------
-// tPartition constructor
+// ---------------------------------------------------------------------------
+// `tPartition` constructor:
 
 // `newPartition()` is a constructor function that creates and
 // initialises a new partition.
@@ -68,8 +70,8 @@ func newPartition[V any]() *tPartition[V] {
 	return p
 } // newPartition()
 
-// --------------------------------------------------------------------
-// tPartition methods
+// ---------------------------------------------------------------------------
+// `tPartition` methods:
 
 // `del()` removes a key/value pair from the partition.
 //
@@ -168,21 +170,52 @@ func (p *tPartition[V]) put(aKey string, aVal V) *tPartition[V] {
 //
 // Returns:
 //   - `string`: A string representation of the partition.
-func (p tPartition[V]) String() (rStr string) {
+func (p tPartition[V]) String() string {
 	p.mtx.RLock()
-	defer p.mtx.RUnlock()
-
-	keys := p.keys()
-	for _, k := range keys {
-		rStr += fmt.Sprintf("%q = '%v'\n", k, p.kv[k])
+	// Get keys while holding the lock
+	keys := make([]string, 0, len(p.kv))
+	for k := range p.kv {
+		keys = append(keys, k)
 	}
 
-	return
+	// Get values while still holding the lock
+	values := make(map[string]V, len(keys))
+	for _, k := range keys {
+		values[k] = p.kv[k]
+	}
+	p.mtx.RUnlock()
+
+	// Process outside the lock
+	slices.Sort(keys)
+
+	var builder strings.Builder
+	for _, k := range keys {
+		builder.WriteString(fmt.Sprintf("%q: '%v'\n", k, values[k]))
+	}
+
+	return builder.String()
 } // String()
 
-// ------------------------------------------------------------------
-// TPartitionMap constructor
+// ---------------------------------------------------------------------------
+// `TPartitionMap` constructor:
 
+// `NewPartitionMap()` creates and initialises a new partition map.
+//
+// This function is a constructor that returns a pointer to a new
+// `TPartitionMap` instance with the specified value type.
+//
+// The returned partition map is initialised with the predefined number
+// of partitions (64), but the actual partition instances are created
+// lazily when needed.
+//
+// Example usage:
+//
+//	pm := NewPartitionMap[string]()
+//	pm.Put("key1", "value1")
+//	value, exists := pm.Get("key1")
+//
+// Returns:
+//   - `*TPartitionMap[V]`: A pointer to the newly created partition map.
 func NewPartitionMap[V any]() *TPartitionMap[V] {
 	// Unfortunately, Go doesn't support the use of sparse arrays
 	// (i.e. slices). That forces us to initialise the whole list
@@ -201,8 +234,8 @@ var (
 	gCrc32Table = crc32.MakeTable(crc32.Castagnoli)
 )
 
-// --------------------------------------------------------------------
-// TPartitionMap methods
+// ---------------------------------------------------------------------------
+// `TPartitionMap` methods:
 
 // `partitionIndex()` computes the partition index for a given key.
 // It uses the CRC32 algorithm to generate a hash value for the key,
@@ -290,6 +323,9 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 // Returns:
 //   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
 func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
+	if nil == pm {
+		return pm
+	}
 	if p, ok := pm.partition(aKey, false); ok {
 		p.del(aKey)
 	}
@@ -312,6 +348,9 @@ func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
 //   - `bool`: Indicating for whether the key was found.
 func (pm TPartitionMap[V]) Get(aKey string) (V, bool) {
 	var zeroVal V
+	if nil == pm {
+		return zeroVal, false
+	}
 
 	if p, ok := pm.partition(aKey, false); ok {
 		return p.get(aKey)
@@ -330,15 +369,46 @@ func (pm TPartitionMap[V]) Get(aKey string) (V, bool) {
 // in ascending order.
 //
 // Return:
-//   - `[]string`: A slice of the keys in the current partition map.
-func (pm TPartitionMap[V]) Keys() (rKeys []string) {
+//   - `[]string`: A slice of all the keys in the current partition map.
+func (pm TPartitionMap[V]) Keys() []string {
+	// Pre-allocate to avoid multiple reallocations
+	totalKeys := 0
 	for _, p := range pm {
-		rKeys = append(rKeys, p.keys()...)
+		if nil != p {
+			p.mtx.RLock()
+			totalKeys += len(p.kv)
+			p.mtx.RUnlock()
+		}
 	}
-	slices.Sort(rKeys)
+	result := make([]string, 0, totalKeys)
+
+	// Collect all keys
+	for _, p := range pm {
+		if nil != p {
+			result = append(result, p.keys()...)
+		}
+	}
+
+	slices.Sort(result)
+
+	return result
+} // Keys()
+
+// `Len()` returns the total number of key/value pairs in the partition map.
+//
+// Returns:
+//   - `rLen int`: The number of all key/value pairs in the partition map.
+func (pm TPartitionMap[V]) Len() (rLen int) {
+	for _, p := range pm {
+		if nil != p {
+			p.mtx.RLock()
+			rLen += len(p.kv)
+			p.mtx.RUnlock()
+		}
+	}
 
 	return
-} // Keys()
+} // Len()
 
 // `Put()` stores a key-value pair into the partition map.
 // If the key already exists, it will be updated.
@@ -362,19 +432,26 @@ func (pm *TPartitionMap[V]) Put(aKey string, aValue V) *TPartitionMap[V] {
 } // Put()
 
 // `String()` returns a string representation of the `TPartitionMap`.
-// It iterates over all partitions and concatenates their string
-// representations.
+// It iterates over all existing partitions and concatenates their
+// string representations.
 //
 // The keys in returned string are sorted in ascending order.
 //
 // Return:
 //   - `string`: A string representation of the partition map.
-func (pm TPartitionMap[V]) String() (rStr string) {
-	for _, p := range pm {
-		rStr += p.String()
+func (pm TPartitionMap[V]) String() string {
+	if nil == pm {
+		return ""
 	}
 
-	return
+	var builder strings.Builder
+	for _, p := range pm {
+		if nil != p {
+			builder.WriteString(p.String())
+		}
+	}
+
+	return builder.String()
 } // String()
 
 /* _EoF_ */
