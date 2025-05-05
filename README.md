@@ -20,7 +20,15 @@
 
 ## Purpose
 
-    //TODO
+This is a `Go` package that implements a _partitioned map data structure_ for storing key-value pairs. Key features include:
+
+- Using a partitioning strategy with CRC32 hashing to distribute keys across multiple partitions,
+- thread-safe implementation with mutex locks for concurrent access,
+- generic implementation supporting any value type,
+- designed for efficient concurrent access by reducing lock contention,
+- implements standard map operations (`Get`, `Put`, `Delete`, etc.).
+
+The package is designed to provide better performance than a standard map when used in highly concurrent environments by sharding the data across multiple partitions.
 
 ## Installation
 
