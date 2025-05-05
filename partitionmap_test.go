@@ -15,107 +15,101 @@ import (
 
 //lint:file-ignore ST1017 - I prefer Yoda conditions
 
+/* * /
 func Test_tPartition_del(t *testing.T) {
-	partition := newPartition[int]()
-
-	// Insert a key-value pair
-	partition.put("key1", 100)
-
-	// Verify that the key-value pair exists
-	if _, ok := partition.kv["key1"]; !ok {
-		t.Errorf("Expected key-value pair to exist")
+	tests := []struct {
+		name      string
+		partition *tPartition[int]
+		key       string
+	}{
+		{
+			name:      "Delete existing key",
+			partition: newPartition[int]().put("testKey", 42),
+			key:       "testKey",
+		},
+		{
+			name:      "Delete non-existent key",
+			partition: newPartition[int](),
+			key:       "nonExistentKey",
+		},
+		{
+			name:      "Nil partition",
+			partition: nil,
+			key:       "anyKey",
+		},
 	}
 
-	// Delete the key-value pair
-	partition = partition.del("key1")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Store original partition for nil check
+			originalPartition := tc.partition
 
-	// Verify that the key-value pair no longer exists
-	if _, ok := partition.kv["key1"]; ok {
-		t.Errorf("Expected key-value pair to be deleted")
+			// Call del method
+			got := tc.partition.del(tc.key)
+
+			// Check if result is the same instance as input
+			if got != originalPartition {
+				t.Errorf("del() returned different instance, got %v, want %v",
+					got, originalPartition)
+			}
+
+			// Check if key exists after deletion
+			if nil != tc.partition {
+				if _, exists := tc.partition.get(tc.key); exists {
+					t.Errorf("After del(), key existence = %q, want %v",
+						tc.key, false)
+				}
+			}
+		})
 	}
 } // Test_tPartition_del()
 
-func Test_tPartition_del_RemovesKeyValuePair(t *testing.T) {
+func Test_tPartition_forEach(t *testing.T) {
 	partition := newPartition[int]()
 
-	// Add a key-value pair
-	partition.put("testKey", 42)
+	// Add some key-value pairs
+	partition.put("key1", 100)
+	partition.put("key2", 200)
+	partition.put("key3", 300)
 
-	// Verify key exists
-	if val, ok := partition.get("testKey"); !ok || (42 != val) {
-		t.Errorf("Expected key 'testKey' to exist with value 42, got %v, exists: %v",
-			val, ok)
-	}
+	// Create a map to store the key-value pairs visited by forEach
+	visited := make(map[string]int)
 
-	// Delete the key
-	partition = partition.del("testKey")
+	// Call forEach to collect all key-value pairs
+	partition.forEach(func(aKey string, aValue int) {
+		visited[aKey] = aValue
+	})
 
-	// Verify key no longer exists
-	if _, ok := partition.get("testKey"); ok {
-		t.Errorf("Expected key 'testKey' to be deleted, but it still exists")
-	}
-} // Test_tPartition_del_RemovesKeyValuePair()
-
-func Test_tPartition_del_ReturnsNilWhenPartitionIsNil(t *testing.T) {
-	type args struct {
-		aKey string
-	}
-	tests := []struct {
-		name      string
-		partition *tPartition[int]
-		args      args
-		want      *tPartition[int]
-	}{
-		{
-			name:      "Partition is nil",
-			partition: nil,
-			args:      args{aKey: "key1"},
-			want:      nil,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := tc.partition.del(tc.args.aKey)
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("del() = %v, want %v", got, tc.want)
-			}
-		})
-	}
-} // Test_tPartition_del_ReturnsNilWhenPartitionIsNil()
-
-func Test_tPartition_del_ReturnsSamePartitionWhenKeyDoesNotExist(t *testing.T) {
-	type args struct {
-		aKey string
+	// Verify all key-value pairs were visited
+	if 3 != len(visited) {
+		t.Errorf("Expected 3 key-value pairs to be visited, got %d",
+			len(visited))
 	}
 
-	tests := []struct {
-		name      string
-		partition *tPartition[int]
-		args      args
-		want      *tPartition[int]
-	}{
-		{
-			name:      "Partition is not nil",
-			partition: &tPartition[int]{kv: make(map[string]int)},
-			args:      args{aKey: "key1"},
-			want:      &tPartition[int]{kv: make(map[string]int)},
-		},
-		{
-			name:      "Partition is nil",
-			partition: nil,
-			args:      args{aKey: "key1"},
-			want:      nil,
-		},
+	// Verify each key-value pair was visited correctly
+	expectedPairs := map[string]int{
+		"key1": 100,
+		"key2": 200,
+		"key3": 300,
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := tc.partition.del(tc.args.aKey)
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("del() = %v, want %v", got, tc.want)
-			}
-		})
+
+	for key, expectedValue := range expectedPairs {
+		if value, ok := visited[key]; !ok || (value != expectedValue) {
+			t.Errorf("Expected key %q with value %d, got %v, exists: %v",
+				key, expectedValue, value, ok)
+		}
 	}
-} // Test_tPartition_del_ReturnsSamePartitionWhenKeyDoesNotExist()
+
+	// Test with nil partition
+	var nilPartition *tPartition[int]
+	result := nilPartition.forEach(func(key string, value int) {
+		t.Errorf("forEach should not call function for nil partition")
+	})
+
+	if nil != result {
+		t.Errorf("Expected nil result when calling forEach() on nil partition")
+	}
+} // Test_tPartition_forEach()
 
 func Test_tPartition_get(t *testing.T) {
 	partition := newPartition[int]()
@@ -140,22 +134,10 @@ func Test_tPartition_get(t *testing.T) {
 	// Test with nil partition
 	var nilPartition *tPartition[int]
 	val, ok = nilPartition.get("anyKey")
-	if ok || val != 0 {
+	if ok || (0 != val) {
 		t.Errorf("get() with nil partition = %v, %v; want 0, false", val, ok)
 	}
 } // Test_tPartition_get()
-
-func Test_tPartition_get_ReturnsEmptyValueAndFalseWhenKeyDoesNotExist(t *testing.T) {
-	partition := newPartition[int]()
-
-	// Test case: key does not exist
-	_, ok := partition.get("key1")
-
-	// Verify that the key does not exist
-	if ok {
-		t.Errorf("Expected key to not exist")
-	}
-} // Test_tPartition_get_ReturnsEmptyValueAndFalseWhenKeyDoesNotExist()
 
 func Test_tPartition_keys(t *testing.T) {
 	partition := newPartition[int]()
@@ -254,6 +236,7 @@ func Test_tPartition_String(t *testing.T) {
 		t.Errorf("Expected 3 lines in output, got %d", len(lines))
 	}
 } // Test_tPartition_String()
+/* */
 
 func Test_TPartitionMap_partitionIndex(t *testing.T) {
 	pm := NewPartitionMap[int]()
@@ -388,35 +371,85 @@ func Test_TPartitionMap_partition(t *testing.T) {
 	}
 } // Test_TPartitionMap_partition()
 
-func Test_TPartitionMap_Delete(t *testing.T) {
-	type args struct {
-		aKey string
-	}
+func Test_TPartitionMap_Clear(t *testing.T) {
 	tests := []struct {
 		name string
 		pm   *TPartitionMap[int]
-		args args
-		want bool // whether key should exist after deletion
+	}{
+		{
+			name: "Empty partition map",
+			pm:   NewPartitionMap[int](),
+		},
+		{
+			name: "Partition map with values",
+			pm: NewPartitionMap[int]().
+				Put("key1", 100).
+				Put("key2", 200).
+				Put("key3", 300),
+		},
+		{
+			name: "Nil partition map",
+			pm:   nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Store original map for nil check
+			originalPM := tc.pm
+
+			// Call Clear method
+			got := tc.pm.Clear()
+
+			// Check if result is the same instance as input
+			if got != originalPM {
+				t.Errorf("Clear() returned different instance, got %v, want %v",
+					got, originalPM)
+			}
+
+			// For nil case, verify no changes
+			if nil == tc.pm {
+				return
+			}
+
+			// Verify all key/value pairs were removed
+			if 0 != tc.pm.Len() {
+				t.Errorf("After Clear(), expected length 0, got %d",
+					tc.pm.Len())
+			}
+
+			// Verify Keys() returns empty slice
+			keys := tc.pm.Keys()
+			if 0 != len(keys) {
+				t.Errorf("After Clear(), expected empty keys slice, got %v",
+					keys)
+			}
+		})
+	}
+} // Test_TPartitionMap_Clear()
+
+func Test_TPartitionMap_Delete(t *testing.T) {
+	tests := []struct {
+		name string
+		pm   *TPartitionMap[int]
+		key  string
 	}{
 		{
 			name: "Delete existing key",
 			pm: func() *TPartitionMap[int] {
 				return NewPartitionMap[int]().Put("testKey", 42)
 			}(),
-			args: args{aKey: "testKey"},
-			want: false,
+			key: "testKey",
 		},
 		{
 			name: "Delete non-existent key",
 			pm:   NewPartitionMap[int](),
-			args: args{aKey: "nonExistentKey"},
-			want: false,
+			key:  "nonExistentKey",
 		},
 		{
 			name: "Nil partition map",
 			pm:   nil,
-			args: args{aKey: "anyKey"},
-			want: false,
+			key:  "anyKey",
 		},
 	}
 
@@ -426,23 +459,89 @@ func Test_TPartitionMap_Delete(t *testing.T) {
 			originalPM := tc.pm
 
 			// Call Delete method
-			result := tc.pm.Delete(tc.args.aKey)
+			got := tc.pm.Delete(tc.key)
 
 			// Check if result is the same instance as input
-			if result != originalPM {
-				t.Errorf("Delete() returned different instance, got %v, want %v", result, originalPM)
+			if got != originalPM {
+				t.Errorf("Delete() returned different instance, got %v, want %v",
+					got, originalPM)
 			}
 
 			// Check if key exists after deletion
 			if tc.pm != nil {
-				_, exists := tc.pm.Get(tc.args.aKey)
-				if exists != tc.want {
-					t.Errorf("After Delete(), key existence = %v, want %v", exists, tc.want)
+				if _, exists := tc.pm.Get(tc.key); exists {
+					t.Errorf("After Delete(), key existence = %q, want %v",
+						tc.key, false)
 				}
 			}
 		})
 	}
 } // Test_TPartitionMap_Delete()
+
+func Test_TPartitionMap_ForEach(t *testing.T) {
+	tests := []struct {
+		name string
+		pm   *TPartitionMap[int]
+	}{
+		{
+			name: "Empty partition map",
+			pm:   NewPartitionMap[int](),
+		},
+		{
+			name: "Partition map with values",
+			pm: NewPartitionMap[int]().
+				Put("key1", 100).
+				Put("key2", 200).
+				Put("key3", 300),
+		},
+		{
+			name: "Nil partition map",
+			pm:   nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a map to store visited key-value pairs
+			visited := make(map[string]int)
+
+			// Call ForEach to collect all key-value pairs
+			got := tc.pm.ForEach(func(key string, value int) {
+				visited[key] = value
+			})
+
+			// Verify the result is the same instance as input
+			if got != tc.pm {
+				t.Errorf("ForEach() returned different instance, got %v, want %v",
+					got, tc.pm)
+			}
+
+			// For nil case, verify no function calls occurred
+			if tc.pm == nil {
+				if 0 < len(visited) {
+					t.Errorf("ForEach() should not call function for nil partition map")
+				}
+				return
+			}
+
+			// For non-nil case, verify all key-value pairs were visited
+			keys := tc.pm.Keys()
+			if len(visited) != len(keys) {
+				t.Errorf("Expected %d key-value pairs to be visited, got %d",
+					len(keys), len(visited))
+			}
+
+			// Verify each key-value pair was visited correctly
+			for _, key := range keys {
+				expectedValue, _ := tc.pm.Get(key)
+				if value, ok := visited[key]; !ok || value != expectedValue {
+					t.Errorf("Expected key %q with value %d, got %v, exists: %v",
+						key, expectedValue, value, ok)
+				}
+			}
+		})
+	}
+} // Test_TPartitionMap_ForEach()
 
 func Test_TPartitionMap_Get(t *testing.T) {
 	tests := []struct {

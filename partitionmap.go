@@ -22,18 +22,16 @@ const (
 )
 
 type (
-	// `tKeyMap` contains a partition's key/value pairs
-	// Type definition provided for better readability and clarity.
+	// `tKeyMap` contains a partition's key/value pairs.
 	tKeyMap[V any] map[string]V
 
-	// `tPartition` implements a single partition in a `tPartitionList`
+	// `tPartition` implements a single partition in a `tPartitionList`.
 	tPartition[V any] struct {
 		sync.RWMutex
 		kv tKeyMap[V] // the final key/value store
 	}
 
 	// `tPartitionList` is a slice of `tPartition` instances.
-	// Type definition provided for better readability and clarity.
 	tPartitionList[V any] []*tPartition[V]
 
 	// `TPartitionMap` is a slice of partitions holding the
@@ -46,7 +44,7 @@ type (
 
 // `newPartition()` is a constructor function that creates and
 // initialises a new partition.
-// Each partition holds a set of key-value pairs.
+// Each partition holds a set of key/value pairs.
 //
 // The function takes no parameters and returns a pointer to a new
 // `tPartition` instance.
@@ -72,19 +70,38 @@ func newPartition[V any]() *tPartition[V] {
 // ---------------------------------------------------------------------------
 // `tPartition` methods:
 
+// `clear()` removes all key/value pairs from the partition.
+//
+// Returns:
+//   - `*tPartition[V]`: The partition itself, allowing method chaining.
+func (p *tPartition[V]) clear() *tPartition[V] {
+	if nil == p {
+		return nil
+	}
+
+	p.Lock()
+	defer p.Unlock()
+
+	// For maps, `clear()` deletes all entries,
+	// resulting in an empty map.
+	clear(p.kv)
+
+	return p
+} // clear()
+
 // `del()` removes a key/value pair from the partition.
 //
 // This method is used to delete a key/value pair from the partition.
 // If the key is found in the partition, it is removed.
 //
 // Parameters:
-//   - `aKey`: The key of the key-value pair to be deleted.
+//   - `aKey`: The key of the key/value pair to be deleted.
 //
 // Returns:
 //   - `*tPartition[V]`: The partition itself, allowing method chaining.
 func (p *tPartition[V]) del(aKey string) *tPartition[V] {
 	if nil == p {
-		return p
+		return nil
 	}
 	p.Lock()
 	defer p.Unlock()
@@ -93,6 +110,34 @@ func (p *tPartition[V]) del(aKey string) *tPartition[V] {
 
 	return p
 } // del()
+
+// `forEach()` executes the provided function for each key/value pair
+// in the partition.
+//
+// Parameters:
+//   - `aFunc`: The function to execute for each key/value pair.
+//
+// Returns:
+//   - `*tPartition[V]`: The partition itself, allowing method chaining.
+func (p *tPartition[V]) forEach(aFunc func(aKey string, aValue V)) *tPartition[V] {
+	if nil == p {
+		return nil
+	}
+	p.RLock()
+	defer p.RUnlock()
+
+	for k, v := range p.kv {
+		// Release lock temporarily to avoid blocking during
+		// function execution.
+		p.RUnlock()
+
+		aFunc(k, v)
+
+		p.RLock()
+	}
+
+	return p
+} // forEach()
 
 // `get()` retrieves a key/value pair from the partition.
 //
@@ -144,7 +189,21 @@ func (p *tPartition[V]) keys() (rKeys []string) {
 	return
 } // keys()
 
-// `put()` stores a key-value pair in the partition.
+// `len()` returns the number of key/value pairs in the partition.
+//
+// Returns:
+//   - `int`: The number of key/value pairs in the partition.
+func (p *tPartition[V]) len() (rLen int) {
+	if nil != p {
+		p.RLock()
+		rLen += len(p.kv)
+		p.RUnlock()
+	}
+
+	return
+} // len()
+
+// `put()` stores a key/value pair in the partition.
 // If the key already exists, it will be updated.
 //
 // Parameters:
@@ -155,7 +214,7 @@ func (p *tPartition[V]) keys() (rKeys []string) {
 //   - `*tPartition[V]`: The partition itself, allowing method chaining.
 func (p *tPartition[V]) put(aKey string, aVal V) *tPartition[V] {
 	if nil == p {
-		return p
+		return nil
 	}
 	p.Lock()
 	defer p.Unlock()
@@ -178,6 +237,7 @@ func (p *tPartition[V]) String() string {
 		return ""
 	}
 	p.RLock()
+
 	// Get keys while holding the lock
 	keys := make([]string, 0, len(p.kv))
 	for k := range p.kv {
@@ -324,10 +384,26 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 // `D`: delete == Delete()
 //
 
+// `Clear()` removes all key/value pairs from the partition map.
+//
+// Returns:
+//   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
+func (pm *TPartitionMap[V]) Clear() *TPartitionMap[V] {
+	if nil == pm {
+		return nil
+	}
+
+	for _, p := range *pm {
+		p.clear()
+	}
+
+	return pm
+} // Clear()
+
 // `Delete()` removes a key/value pair from the partition map.
 //
 // Parameters:
-//   - `aKey`: The key of the key-value pair to be deleted.
+//   - `aKey`: The key of the key/value pair to be deleted.
 //
 // Returns:
 //   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
@@ -342,9 +418,29 @@ func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
 	return pm
 } // Delete()
 
-// `Get()` retrieves a key-value/pair from the partition map.
+// `ForEach()` executes the provided function for each key/value pair
+// in the partition map.
 //
-// If the partition map contains a key-value pair with the specified key,
+// Parameters:
+//   - `aFunc`: The function to execute for each key/value pair.
+//
+// Returns:
+//   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
+func (pm *TPartitionMap[V]) ForEach(aFunc func(aKey string, aValue V)) *TPartitionMap[V] {
+	if nil == pm {
+		return nil
+	}
+
+	for _, p := range *pm {
+		p.forEach(aFunc)
+	}
+
+	return pm
+} // ForEach()
+
+// `Get()` retrieves a key/value pair from the partition map.
+//
+// If the partition map contains a key/value pair with the specified key,
 // the function returns the associated value and a boolean value indicating
 // whether the key was found. If the key is not found, the function returns
 // the zero value of type V and a boolean value of false.
@@ -353,7 +449,7 @@ func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
 //   - `aKey`: The key of the key/value pair to be retrieved.
 //
 // Returns:
-//   - `V`: The value associated with the key ()if found).
+//   - `V`: The value associated with the key (if found).
 //   - `bool`: Indicating for whether the key was found.
 func (pm *TPartitionMap[V]) Get(aKey string) (V, bool) {
 	var zeroVal V
@@ -384,14 +480,9 @@ func (pm *TPartitionMap[V]) Keys() []string {
 		return nil
 	}
 
-	// Pre-allocate to avoid multiple reallocations
 	totalKeys := 0
 	for _, p := range *pm {
-		if nil != p {
-			p.RLock()
-			totalKeys += len(p.kv)
-			p.RUnlock()
-		}
+		totalKeys += p.len()
 	}
 	result := make([]string, 0, totalKeys)
 
@@ -415,18 +506,15 @@ func (pm *TPartitionMap[V]) Len() (rLen int) {
 	if nil == pm {
 		return
 	}
+
 	for _, p := range *pm {
-		if nil != p {
-			p.RLock()
-			rLen += len(p.kv)
-			p.RUnlock()
-		}
+		rLen += p.len()
 	}
 
 	return
 } // Len()
 
-// `Put()` stores a key-value pair into the partition map.
+// `Put()` stores a key/value pair into the partition map.
 // If the key already exists, it will be updated.
 //
 // Parameters:
