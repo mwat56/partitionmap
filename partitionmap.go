@@ -28,8 +28,8 @@ type (
 
 	// `tPartition` implements a single partition in a `tPartitionList`.
 	tPartition[V any] struct {
-		sync.RWMutex
-		kv tKeyMap[V] // the final key/value store
+		sync.RWMutex            // protect the key/value store
+		kv           tKeyMap[V] // the key/value store
 	}
 
 	// `tPartitionList` is a slice of `tPartition` instances.
@@ -37,7 +37,10 @@ type (
 
 	// `TPartitionMap` is a slice of partitions holding the
 	// key/value pairs.
-	TPartitionMap[V any] tPartitionList[V]
+	TPartitionMap[V any] struct {
+		sync.RWMutex      // protect the list of partitions
+		tPartitionList[V] // the list of partitions
+	}
 )
 
 // ---------------------------------------------------------------------------
@@ -297,12 +300,14 @@ func New[V any]() *TPartitionMap[V] {
 	//
 	// An empty map is allocated with enough space to hold the
 	// specified number of elements.
-	result := make(TPartitionMap[V], numberOfPartitionsInMap)
+	result := &TPartitionMap[V]{
+		tPartitionList: make(tPartitionList[V], numberOfPartitionsInMap),
+	}
 
 	// Leave the partitions to lazy/late initialisation;
 	// see `TPartitionMap.partition()`.
 
-	return &result
+	return result
 } // New()
 
 // ---------------------------------------------------------------------------
@@ -362,7 +367,10 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 	}
 	idx := partitionIndex(aKey)
 
-	p := (*pm)[idx]
+	pm.RLock()
+	p := (pm.tPartitionList)[idx]
+	pm.RUnlock()
+
 	if nil != p {
 		return p, true
 	}
@@ -373,7 +381,9 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 
 	// Here we do the lazy initialisation of the required `tPartition`:
 	p = newPartition[V]()
-	(*pm)[idx] = p
+	pm.Lock()
+	(pm.tPartitionList)[idx] = p
+	pm.Unlock()
 
 	return p, true
 } // partition()
@@ -396,9 +406,11 @@ func (pm *TPartitionMap[V]) Clear() *TPartitionMap[V] {
 		return nil
 	}
 
-	for _, p := range *pm {
+	pm.Lock()
+	for _, p := range pm.tPartitionList {
 		p.clear()
 	}
+	pm.Unlock()
 
 	return pm
 } // Clear()
@@ -414,6 +426,7 @@ func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
 	if nil == pm {
 		return nil
 	}
+
 	if p, ok := pm.partition(aKey, false); ok {
 		p.del(aKey)
 	}
@@ -434,9 +447,11 @@ func (pm *TPartitionMap[V]) ForEach(aFunc func(aKey string, aValue V)) *TPartiti
 		return nil
 	}
 
-	for _, p := range *pm {
+	pm.RLock()
+	for _, p := range pm.tPartitionList {
 		p.forEach(aFunc)
 	}
+	pm.RUnlock()
 
 	return pm
 } // ForEach()
@@ -503,17 +518,26 @@ func (pm *TPartitionMap[V]) Keys() []string {
 	}
 
 	totalKeys := 0
-	for _, p := range *pm {
+	pm.RLock()
+	for _, p := range pm.tPartitionList {
 		totalKeys += p.len()
 	}
+	pm.RUnlock()
+
+	if 0 == totalKeys {
+		return []string{}
+	}
+
 	result := make([]string, 0, totalKeys)
 
 	// Collect all keys
-	for _, p := range *pm {
+	pm.RLock()
+	for _, p := range pm.tPartitionList {
 		if nil != p {
 			result = append(result, p.keys()...)
 		}
 	}
+	pm.RUnlock()
 
 	slices.Sort(result)
 
@@ -529,9 +553,11 @@ func (pm *TPartitionMap[V]) Len() (rLen int) {
 		return
 	}
 
-	for _, p := range *pm {
+	pm.RLock()
+	for _, p := range pm.tPartitionList {
 		rLen += p.len()
 	}
+	pm.RUnlock()
 
 	return
 } // Len()
@@ -549,6 +575,7 @@ func (pm *TPartitionMap[V]) Put(aKey string, aValue V) *TPartitionMap[V] {
 	if nil == pm {
 		return nil
 	}
+
 	if p, ok := pm.partition(aKey, true); ok {
 		// Store the key/value pair in the partition
 		p.put(aKey, aValue)
@@ -571,9 +598,11 @@ func (pm *TPartitionMap[V]) String() string {
 	}
 
 	var builder strings.Builder
-	for _, p := range *pm {
+	pm.RLock()
+	for _, p := range pm.tPartitionList {
 		builder.WriteString(p.String())
 	}
+	pm.RUnlock()
 
 	return builder.String()
 } // String()
