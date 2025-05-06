@@ -81,12 +81,12 @@ func (p *tPartition[V]) clear() *tPartition[V] {
 	if nil == p {
 		return nil
 	}
-	p.Lock()
-	defer p.Unlock()
 
+	p.Lock()
 	// For maps, `clear()` deletes all entries,
 	// resulting in an empty map.
 	clear(p.kv)
+	p.Unlock()
 
 	return p
 } // clear()
@@ -105,10 +105,10 @@ func (p *tPartition[V]) del(aKey string) *tPartition[V] {
 	if nil == p {
 		return nil
 	}
-	p.Lock()
-	defer p.Unlock()
 
+	p.Lock()
 	delete(p.kv, aKey)
+	p.Unlock()
 
 	return p
 } // del()
@@ -161,10 +161,10 @@ func (p *tPartition[V]) get(aKey string) (rVal V, rOk bool) {
 	if nil == p {
 		return
 	}
-	p.RLock()
-	defer p.RUnlock()
 
+	p.RLock()
 	rVal, rOk = p.kv[aKey]
+	p.RUnlock()
 
 	return
 } // get()
@@ -180,12 +180,13 @@ func (p *tPartition[V]) keys() (rKeys []string) {
 	if nil == p {
 		return
 	}
-	p.RLock()
-	defer p.RUnlock()
 
+	p.RLock()
 	for k := range p.kv {
 		rKeys = append(rKeys, k)
 	}
+	p.RUnlock()
+
 	slices.Sort(rKeys)
 
 	return
@@ -218,10 +219,10 @@ func (p *tPartition[V]) put(aKey string, aVal V) *tPartition[V] {
 	if nil == p {
 		return nil
 	}
-	p.Lock()
-	defer p.Unlock()
 
+	p.Lock()
 	p.kv[aKey] = aVal
+	p.Unlock()
 
 	return p
 } // put()
@@ -238,9 +239,8 @@ func (p *tPartition[V]) String() string {
 	if nil == p {
 		return ""
 	}
-	p.RLock()
 
-	// Get keys while holding the lock
+	p.RLock()
 	keys := make([]string, 0, len(p.kv))
 	values := make(map[string]V, len(p.kv))
 	for k := range p.kv {
