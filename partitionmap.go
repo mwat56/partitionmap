@@ -9,6 +9,7 @@ package partitionmap
 import (
 	"fmt"
 	"hash/crc32"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -91,6 +92,21 @@ func (p *tPartition[V]) clear() *tPartition[V] {
 	return p
 } // clear()
 
+// `clone()` creates a deep copy of the partition's key/value pairs.
+//
+// The method returns a copy of the key/value pairs. This is a shallow
+// clone: the new keys and values are set using ordinary assignment.
+//
+// Returns:
+//   - `tKeyMap[V]`: A deep copy of the partition's key/value pairs.
+func (p *tPartition[V]) clone() tKeyMap[V] {
+	p.RLock()
+	result := maps.Clone(p.kv)
+	p.RUnlock()
+
+	return result
+} // clone()
+
 // `del()` removes a key/value pair from the partition.
 //
 // This method is used to delete a key/value pair from the partition.
@@ -125,17 +141,14 @@ func (p *tPartition[V]) forEach(aFunc func(aKey string, aValue V)) *tPartition[V
 	if nil == p {
 		return nil
 	}
-	p.RLock()
-	defer p.RUnlock()
 
-	for k, v := range p.kv {
-		// Release lock temporarily to avoid blocking during
-		// function execution.
-		p.RUnlock()
+	// Create a snapshot of keys/values under lock to avoid
+	// holding lock during callback
+	kvMap := p.clone()
 
+	// Execute callback outside of lock
+	for k, v := range kvMap {
 		aFunc(k, v)
-
-		p.RLock()
 	}
 
 	return p
@@ -240,21 +253,18 @@ func (p *tPartition[V]) String() string {
 		return ""
 	}
 
-	p.RLock()
-	keys := make([]string, 0, len(p.kv))
-	values := make(map[string]V, len(p.kv))
-	for k := range p.kv {
+	// Create a snapshot of keys/values under lock to
+	// avoid holding lock during processing
+	kvMap := p.clone()
+	keys := make([]string, 0, len(kvMap))
+	for k := range kvMap {
 		keys = append(keys, k)
-		values[k] = p.kv[k]
 	}
-	p.RUnlock()
-
-	// Process outside the lock
 	slices.Sort(keys)
 
 	var builder strings.Builder
 	for _, k := range keys {
-		builder.WriteString(fmt.Sprintf("%q: '%v'\n", k, values[k]))
+		builder.WriteString(fmt.Sprintf("%q: '%v'\n", k, kvMap[k]))
 	}
 
 	return builder.String()
@@ -314,20 +324,12 @@ var (
 //
 // Returns:
 //   - `uint32`: The partition index to use for the given key.
-func (pm *TPartitionMap[V]) partitionIndex(aKey string) (rIdx uint32) {
-	if nil == pm {
-		return
-	}
-	// SHA-512 has a very low chance of collisions. For small data sizes
-	// up to 255 bytes, SHA-256 is typically faster than SHA-512 on 32-bit
-	// systems. However, on 64-bit systems, SHA-512 can be faster than
-	// SHA-256, even for small data sizes.
-	// Here, we don't care for possible collisions but only for speed.
-	// So we choose CRC32 instead of the cryptographically more secure
-	// SHA-256 and SHA-512 algorithms.
-	// If there would, in fact, happen to be a collision of two different
-	// keys, the only consequence would be that both keys end up in the
-	// same partition: So what?
+func partitionIndex(aKey string) (rIdx uint32) {
+	// We use CRC32 for speed and adequate distribution.
+	// While it's not cryptographically secure, it's perfect for our
+	// partitioning needs.
+	// If two different keys hash to the same partition, they'll
+	// simply share a partition.
 
 	cs32 := crc32.Checksum([]byte(aKey), gCrc32Table)
 	rIdx = cs32 % numberOfPartitionsInMap
@@ -358,7 +360,7 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 	if nil == pm {
 		return nil, false
 	}
-	idx := pm.partitionIndex(aKey)
+	idx := partitionIndex(aKey)
 
 	p := (*pm)[idx]
 	if nil != p {
@@ -465,6 +467,25 @@ func (pm *TPartitionMap[V]) Get(aKey string) (V, bool) {
 	return zeroVal, false
 } // Get()
 
+// `GetOrDefault()` retrieves a value for the given key, or returns
+// the given default value if the key doesn't exist in the partition map.
+//
+// Parameters:
+//   - `aKey`: The key to look up.
+//   - `aDefault`: The default value to return if the key is not found.
+//
+// Returns:
+//   - `V`: The value associated with `aKey`, or `aDefault` if not found.
+func (pm *TPartitionMap[V]) GetOrDefault(aKey string, aDefault V) V {
+	if nil != pm {
+		if result, ok := pm.Get(aKey); ok {
+			return result
+		}
+	}
+
+	return aDefault
+} // GetOrDefault()
+
 // `Keys()` returns a slice of all keys in the partition map.
 //
 // The partition map is divided into multiple partitions, each holding
@@ -556,5 +577,33 @@ func (pm *TPartitionMap[V]) String() string {
 
 	return builder.String()
 } // String()
+
+// `Values()` returns a slice of all values in the partition map.
+//
+// The partition map is divided into multiple partitions, each holding
+// a subset of the values. This method retrieves the values from all
+// partitions and returns them in a slice.
+//
+// The order of values in the returned slice corresponds to the order
+// of keys returned by the `Keys()` method.
+//
+// Return:
+//   - `[]V`: A slice of all the values in the current partition map.
+func (pm *TPartitionMap[V]) Values() []V {
+	if nil == pm {
+		return nil
+	}
+
+	keys := pm.Keys()
+	result := make([]V, 0, len(keys))
+
+	for _, key := range keys {
+		if val, ok := pm.Get(key); ok {
+			result = append(result, val)
+		}
+	}
+
+	return result
+} // Values()
 
 /* _EoF_ */

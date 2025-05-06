@@ -9,6 +9,7 @@ package partitionmap
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -17,9 +18,7 @@ import (
 
 //lint:file-ignore ST1017 - I prefer Yoda conditions
 
-func Test_TPartitionMap_partitionIndex(t *testing.T) {
-	pm := New[int]()
-
+func Test_partitionIndex(t *testing.T) {
 	tests := []struct {
 		name string
 		key  string
@@ -34,7 +33,7 @@ func Test_TPartitionMap_partitionIndex(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			idx := pm.partitionIndex(tc.key)
+			idx := partitionIndex(tc.key)
 
 			// Verify index is within valid range
 			if idx >= numberOfPartitionsInMap {
@@ -43,7 +42,7 @@ func Test_TPartitionMap_partitionIndex(t *testing.T) {
 			}
 
 			// Verify consistency - same key should always produce same index
-			idx2 := pm.partitionIndex(tc.key)
+			idx2 := partitionIndex(tc.key)
 			if idx != idx2 {
 				t.Errorf("partitionIndex not consistent: %q produced %d and %d",
 					tc.key, idx, idx2)
@@ -57,7 +56,7 @@ func Test_TPartitionMap_partitionIndex(t *testing.T) {
 
 	for i := range numberOfPartitionsInMap {
 		key := fmt.Sprintf("test-key-%d", i)
-		idx := pm.partitionIndex(key)
+		idx := partitionIndex(key)
 
 		if existingKey, exists := indices[idx]; exists {
 			collisions++
@@ -71,7 +70,7 @@ func Test_TPartitionMap_partitionIndex(t *testing.T) {
 	// Log collision rate - some collisions are expected with CRC32
 	t.Logf("Collision rate: %d%% (%d out of %d keys)",
 		collisions, collisions, numberOfPartitionsInMap)
-} // Test_TPartitionMap_partitionIndex()
+} // Test_partitionIndex()
 
 func Test_TPartitionMap_partition(t *testing.T) {
 	type tArgs struct {
@@ -370,6 +369,48 @@ func Test_TPartitionMap_Get(t *testing.T) {
 	}
 } // Test_TPartitionMap_Get()
 
+func Test_TPartitionMap_GetOrDefault(t *testing.T) {
+	tests := []struct {
+		name     string
+		pm       *TPartitionMap[int]
+		key      string
+		defValue int
+		want     int
+	}{
+		{
+			name:     "Get existing key",
+			pm:       New[int]().Put("testKey", 42),
+			key:      "testKey",
+			defValue: -1,
+			want:     42,
+		},
+		{
+			name:     "Get non-existent key",
+			pm:       New[int](),
+			key:      "nonExistentKey",
+			defValue: 99,
+			want:     99,
+		},
+		{
+			name:     "Nil partition map",
+			pm:       nil,
+			key:      "anyKey",
+			defValue: 123,
+			want:     123,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.pm.GetOrDefault(tc.key, tc.defValue)
+			if got != tc.want {
+				t.Errorf("GetOrDefault() = '%v', want '%v'",
+					got, tc.want)
+			}
+		})
+	}
+} // Test_TPartitionMap_GetOrDefault()
+
 func Test_TPartitionMap_Keys(t *testing.T) {
 	tests := []struct {
 		name string
@@ -514,6 +555,122 @@ func Test_TPartitionMap_Put(t *testing.T) {
 	}
 } // Test_TPartitionMap_Put()
 
+func Test_TPartitionMap_StressTest(t *testing.T) {
+	// This test is designed to:
+	//
+	// 1. Run multiple goroutines concurrently to test thread safety.
+	// 2. Exercise all `TPartitionMap` methods: `Put/`, `Get()`, `Delete()`,
+	// `ForEach()`, `Keys()`, `Len()`, `String()`, `Clear()`.
+	// 3. Perform a mix of operations to simulate real-world usage patterns.
+	// 4. Verify the map remains functional after stress testing.
+	// 5. Report performance metrics (operations per second).
+	//
+	// The test can be skipped in short mode with `go test -short` for
+	// quicker test runs.
+	if testing.Short() {
+		t.Skip("Skipping stress test in short mode")
+	}
+
+	const (
+		numOperations = 1 << 16
+		numGoroutines = 1 << 8
+	)
+
+	pm := New[string]()
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Create a channel to coordinate operations
+	ops := make(chan int, numOperations)
+	for i := range numOperations {
+		ops <- i
+	}
+	close(ops)
+
+	// Create a function to run operations concurrently
+	runOperations := func(id int) {
+		defer wg.Done()
+		for op := range ops {
+			key := fmt.Sprintf("key-%d-%d", id, op)
+			value := fmt.Sprintf("value-%d-%d", id, op)
+
+			// Mix of operations to stress test all capabilities
+			switch op % 8 {
+			case 0: // Put
+				pm.Put(key, value)
+			case 1: // Get
+				pm.Get(key)
+			case 2: // Delete
+				pm.Delete(key)
+			case 3: // ForEach (limited scope)
+				pm.ForEach(func(k string, v string) {
+					// Just access the values
+					_ = k + v
+				})
+			case 4: // Keys
+				keys := pm.Keys()
+				if 100 < len(keys) {
+					// Limit memory usage in test
+					keys = keys[:100]
+					_ = keys
+				}
+			case 5: // Len
+				_ = pm.Len()
+			case 6: // String
+				s := pm.String()
+				if 0 < len(s) {
+					// Limit memory usage in test
+					s = ""
+					_ = s
+				}
+			case 7: // Values
+				values := pm.Values()
+				if 100 < len(values) {
+					// Limit memory usage in test
+					values = values[:100]
+					_ = values
+				}
+			} // switch op % 8
+
+			// Occasionally perform more expensive operations
+			if 0 == op%1024 {
+				// Get length
+				_ = pm.Len()
+			}
+
+			// Very occasionally clear the map
+			if (0 == op%512) && (1 == id) {
+				pm.Clear()
+			}
+		}
+	}
+
+	// Start goroutines
+	start := time.Now()
+	for i := range numGoroutines {
+		go runOperations(i)
+	}
+
+	// Wait for all operations to complete
+	wg.Wait()
+	duration := time.Since(start)
+
+	// Report results
+	t.Logf("Stress test completed: %d operations across %d goroutines in %v",
+		numOperations, numGoroutines, duration)
+	t.Logf("Operations per second: %.2f", float64(numOperations)/duration.Seconds())
+	t.Logf("Final map size: %d entries", pm.Len())
+
+	// Verify the map is still functional after stress
+	testKey := "final-test-key"
+	testValue := "final-test-value"
+	pm.Put(testKey, testValue)
+	val, exists := pm.Get(testKey)
+	if !exists || (val != testValue) {
+		t.Errorf("Map integrity check failed after stress test")
+	}
+} // Test_TPartitionMap_StressTest()
+
 func Test_TPartitionMap_String(t *testing.T) {
 	tests := []struct {
 		name string
@@ -569,113 +726,73 @@ func Test_TPartitionMap_String(t *testing.T) {
 	}
 } // Test_TPartitionMap_String()
 
-func Test_TPartitionMap_StressTest(t *testing.T) {
-	// This test is designed to:
-	//
-	// 1. Run multiple goroutines concurrently to test thread safety.
-	// 2. Exercise all `TPartitionMap` methods: `Put/`, `Get()`, `Delete()`,
-	// `ForEach()`, `Keys()`, `Len()`, `String()`, `Clear()`.
-	// 3. Perform a mix of operations to simulate real-world usage patterns.
-	// 4. Verify the map remains functional after stress testing.
-	// 5. Report performance metrics (operations per second).
-	//
-	// The test can be skipped in short mode with `go test -short` for
-	// quicker test runs.
-	if testing.Short() {
-		t.Skip("Skipping stress test in short mode")
+func Test_TPartitionMap_Values(t *testing.T) {
+	tests := []struct {
+		name      string
+		pm        *TPartitionMap[int]
+		wantCount int
+		wantVals  []int
+	}{
+		{
+			name:      "Empty partition map",
+			pm:        New[int](),
+			wantCount: 0,
+			wantVals:  []int{},
+		},
+		{
+			name: "Partition map with values",
+			pm: New[int]().
+				Put("key1", 100).
+				Put("key2", 200).
+				Put("key3", 300),
+			wantCount: 3,
+			wantVals:  []int{100, 200, 300},
+		},
+		{
+			name:      "Nil partition map",
+			pm:        nil,
+			wantCount: 0,
+			wantVals:  nil,
+		},
 	}
 
-	const (
-		numOperations = 1 << 16
-		numGoroutines = 1 << 8
-	)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.pm.Values()
 
-	pm := New[string]()
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	// Create a channel to coordinate operations
-	ops := make(chan int, numOperations)
-	for i := range numOperations {
-		ops <- i
-	}
-	close(ops)
-
-	// Create a function to run operations concurrently
-	runOperations := func(id int) {
-		defer wg.Done()
-		for op := range ops {
-			key := fmt.Sprintf("key-%d-%d", id, op)
-			value := fmt.Sprintf("value-%d-%d", id, op)
-
-			// Mix of operations to stress test all capabilities
-			switch op % 7 {
-			case 0: // Put
-				pm.Put(key, value)
-			case 1: // Get
-				pm.Get(key)
-			case 2: // Delete
-				pm.Delete(key)
-			case 3: // ForEach (limited scope)
-				pm.ForEach(func(k string, v string) {
-					// Just access the values
-					_ = k + v
-				})
-			case 4: // Keys
-				keys := pm.Keys()
-				if 100 < len(keys) {
-					// Limit memory usage in test
-					keys = keys[:100]
-					_ = keys
-				}
-			case 5: // Len
-				_ = pm.Len()
-			case 6: // String
-				s := pm.String()
-				if 0 < len(s) {
-					// Limit memory usage in test
-					s = ""
-					_ = s
-				}
-			} // switch op % 7
-
-			// Occasionally perform more expensive operations
-			if 0 == op%1024 {
-				// Get length
-				_ = pm.Len()
+			// Check length
+			if len(got) != tc.wantCount {
+				t.Errorf("Values() returned %d values, want %d",
+					len(got), tc.wantCount)
 			}
 
-			// Very occasionally clear the map
-			if (0 == op%512) && (1 == id) {
-				pm.Clear()
+			// For nil case, verify nil return
+			if tc.pm == nil {
+				if got != nil {
+					t.Errorf("Values() returned non-nil for nil map, got %v", got)
+				}
+				return
 			}
-		}
+
+			// For non-nil case with values, verify all expected values are present
+			// (order may vary based on key sorting)
+			if tc.wantCount > 0 {
+				// Sort both slices to ensure consistent comparison
+				sortedGot := make([]int, len(got))
+				copy(sortedGot, got)
+				sort.Ints(sortedGot)
+
+				sortedWant := make([]int, len(tc.wantVals))
+				copy(sortedWant, tc.wantVals)
+				sort.Ints(sortedWant)
+
+				if !reflect.DeepEqual(sortedGot, sortedWant) {
+					t.Errorf("Values() = %v, want %v",
+						sortedGot, sortedWant)
+				}
+			}
+		})
 	}
-
-	// Start goroutines
-	start := time.Now()
-	for i := range numGoroutines {
-		go runOperations(i)
-	}
-
-	// Wait for all operations to complete
-	wg.Wait()
-	duration := time.Since(start)
-
-	// Report results
-	t.Logf("Stress test completed: %d operations across %d goroutines in %v",
-		numOperations, numGoroutines, duration)
-	t.Logf("Operations per second: %.2f", float64(numOperations)/duration.Seconds())
-	t.Logf("Final map size: %d entries", pm.Len())
-
-	// Verify the map is still functional after stress
-	testKey := "final-test-key"
-	testValue := "final-test-value"
-	pm.Put(testKey, testValue)
-	val, exists := pm.Get(testKey)
-	if !exists || (val != testValue) {
-		t.Errorf("Map integrity check failed after stress test")
-	}
-} // Test_TPartitionMap_StressTest()
+} // Test_TPartitionMap_Values()
 
 /* _EoF_ */
