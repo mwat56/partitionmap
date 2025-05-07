@@ -339,15 +339,15 @@ func partitionIndex[K cmp.Ordered](aKey K) uint8 {
 
 	switch val := any(aKey).(type) {
 	case int: // negative values would turn into a modulo == 0
-		uintKey = uint64(val)
+		uintKey = uint64(val) //#nosec G115
 	case int8:
-		uintKey = uint64(val)
+		uintKey = uint64(val) //#nosec G115
 	case int16:
-		uintKey = uint64(val)
+		uintKey = uint64(val) //#nosec G115
 	case int32:
-		uintKey = uint64(val)
+		uintKey = uint64(val) //#nosec G115
 	case int64:
-		uintKey = uint64(val)
+		uintKey = uint64(val) //#nosec G115
 	case uint:
 		uintKey = uint64(val)
 	case uint8:
@@ -381,7 +381,7 @@ func partitionIndex[K cmp.Ordered](aKey K) uint8 {
 	// simply share a partition.
 
 	cs32 := crc32.Checksum(key, gCrc32Table)
-	return uint8(cs32 % numberOfPartitionsInMap)
+	return uint8(cs32 % numberOfPartitionsInMap) //#nosec G115
 } // partitionIndex()
 
 // `partition()` retrieves a partition from the partitioned map based
