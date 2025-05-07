@@ -7,10 +7,12 @@ Copyright © 2024, 2025  M.Watermann, 10247 Berlin, Germany
 package partitionmap
 
 import (
+	"cmp"
 	"fmt"
 	"hash/crc32"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -19,27 +21,27 @@ import (
 
 const (
 	// The number of partitions to use for the key/value pairs.
-	numberOfPartitionsInMap = 64 // well within byte range
+	numberOfPartitionsInMap = 128 // well within byte range
 )
 
 type (
 	// `tKeyMap` contains a partition's key/value pairs.
-	tKeyMap[V any] map[string]V
+	tKeyMap[K cmp.Ordered, V any] map[K]V
 
 	// `tPartition` implements a single partition in a `tPartitionList`.
-	tPartition[V any] struct {
-		sync.RWMutex            // protect the key/value store
-		kv           tKeyMap[V] // the key/value store
+	tPartition[K cmp.Ordered, V any] struct {
+		sync.RWMutex               // protect the key/value store
+		kv           tKeyMap[K, V] // the key/value store
 	}
 
 	// `tPartitionList` is a slice of `tPartition` instances.
-	tPartitionList[V any] []*tPartition[V]
+	tPartitionList[K cmp.Ordered, V any] []*tPartition[K, V]
 
 	// `TPartitionMap` is a slice of partitions holding the
 	// key/value pairs.
-	TPartitionMap[V any] struct {
-		sync.RWMutex      // protect the list of partitions
-		tPartitionList[V] // the list of partitions
+	TPartitionMap[K cmp.Ordered, V any] struct {
+		sync.RWMutex         // protect the list of partitions
+		tPartitionList[K, V] // the list of partitions
 	}
 )
 
@@ -54,21 +56,21 @@ type (
 // `tPartition` instance.
 //
 // The returned partition is initialised with a read-write mutex and
-// an empty map (tKeyMap[V]).
+// an empty map.
 //
 // Example usage:
 //
-//	partition := newPartition[int]()
+//	partition := newPartition[string, int]()
 //	partition.put("key1", 10)
 //	partition.put("key2", 20)
 //	value, ok := partition.get("key1")
 //	fmt.Println(value, ok) // Output: 10 true
 //
 // Returns:
-//   - `*tPartition[V]`: A pointer to a newly created partition.
-func newPartition[V any]() *tPartition[V] {
-	p := &tPartition[V]{
-		kv: make(tKeyMap[V]),
+//   - `*tPartition[K, V]`: A pointer to a newly created partition.
+func newPartition[K cmp.Ordered, V any]() *tPartition[K, V] {
+	p := &tPartition[K, V]{
+		kv: make(tKeyMap[K, V]),
 	}
 
 	return p
@@ -80,8 +82,8 @@ func newPartition[V any]() *tPartition[V] {
 // `clear()` removes all key/value pairs from the partition.
 //
 // Returns:
-//   - `*tPartition[V]`: The partition itself, allowing method chaining.
-func (p *tPartition[V]) clear() *tPartition[V] {
+//   - `*tPartition[K, V]`: The partition itself, allowing method chaining.
+func (p *tPartition[K, V]) clear() *tPartition[K, V] {
 	if nil == p {
 		return nil
 	}
@@ -101,8 +103,8 @@ func (p *tPartition[V]) clear() *tPartition[V] {
 // clone: the new keys and values are set using ordinary assignment.
 //
 // Returns:
-//   - `tKeyMap[V]`: A deep copy of the partition's key/value pairs.
-func (p *tPartition[V]) clone() tKeyMap[V] {
+//   - `tKeyMap[K, V]`: A deep copy of the partition's key/value pairs.
+func (p *tPartition[K, V]) clone() tKeyMap[K, V] {
 	p.RLock()
 	result := maps.Clone(p.kv)
 	p.RUnlock()
@@ -119,8 +121,8 @@ func (p *tPartition[V]) clone() tKeyMap[V] {
 //   - `aKey`: The key of the key/value pair to be deleted.
 //
 // Returns:
-//   - `*tPartition[V]`: The partition itself, allowing method chaining.
-func (p *tPartition[V]) del(aKey string) *tPartition[V] {
+//   - `*tPartition[K, V]`: The partition itself, allowing method chaining.
+func (p *tPartition[K, V]) del(aKey K) *tPartition[K, V] {
 	if nil == p {
 		return nil
 	}
@@ -139,8 +141,8 @@ func (p *tPartition[V]) del(aKey string) *tPartition[V] {
 //   - `aFunc`: The function to execute for each key/value pair.
 //
 // Returns:
-//   - `*tPartition[V]`: The partition itself, allowing method chaining.
-func (p *tPartition[V]) forEach(aFunc func(aKey string, aValue V)) *tPartition[V] {
+//   - `*tPartition[K, V]`: The partition itself, allowing method chaining.
+func (p *tPartition[K, V]) forEach(aFunc func(aKey K, aValue V)) *tPartition[K, V] {
 	if nil == p {
 		return nil
 	}
@@ -173,7 +175,7 @@ func (p *tPartition[V]) forEach(aFunc func(aKey string, aValue V)) *tPartition[V
 // Returns:
 //   - `V`: The value associated with the key (if found).
 //   - `bool`: Indicating whether the key was found.
-func (p *tPartition[V]) get(aKey string) (rVal V, rOk bool) {
+func (p *tPartition[K, V]) get(aKey K) (rVal V, rOk bool) {
 	if nil == p {
 		return
 	}
@@ -191,8 +193,8 @@ func (p *tPartition[V]) get(aKey string) (rVal V, rOk bool) {
 // the keys from the partition and returns them in a sorted slice.
 //
 // Returns:
-//   - `[]string`: A slice of the keys in the current partition.
-func (p *tPartition[V]) keys() (rKeys []string) {
+//   - `rKeys`: A slice of the keys in the current partition.
+func (p *tPartition[K, V]) keys() (rKeys []K) {
 	if nil == p {
 		return
 	}
@@ -211,11 +213,11 @@ func (p *tPartition[V]) keys() (rKeys []string) {
 // `len()` returns the number of key/value pairs in the partition.
 //
 // Returns:
-//   - `int`: The number of key/value pairs in the partition.
-func (p *tPartition[V]) len() (rLen int) {
+//   - `rLen`: The number of key/value pairs in the partition.
+func (p *tPartition[K, V]) len() (rLen int) {
 	if nil != p {
 		p.RLock()
-		rLen += len(p.kv)
+		rLen = len(p.kv)
 		p.RUnlock()
 	}
 
@@ -230,8 +232,8 @@ func (p *tPartition[V]) len() (rLen int) {
 //   - `aValue`: The value associated with the key.
 //
 // Returns:
-//   - `*tPartition[V]`: The partition itself, allowing method chaining.
-func (p *tPartition[V]) put(aKey string, aVal V) *tPartition[V] {
+//   - `*tPartition[K, V]`: The partition itself, allowing method chaining.
+func (p *tPartition[K, V]) put(aKey K, aVal V) *tPartition[K, V] {
 	if nil == p {
 		return nil
 	}
@@ -251,7 +253,7 @@ func (p *tPartition[V]) put(aKey string, aVal V) *tPartition[V] {
 //
 // Returns:
 //   - `string`: A string representation of the partition.
-func (p *tPartition[V]) String() string {
+func (p *tPartition[K, V]) String() string {
 	if nil == p {
 		return ""
 	}
@@ -259,7 +261,7 @@ func (p *tPartition[V]) String() string {
 	// Create a snapshot of keys/values under lock to
 	// avoid holding lock during processing
 	kvMap := p.clone()
-	keys := make([]string, 0, len(kvMap))
+	keys := make([]K, 0, len(kvMap))
 	for k := range kvMap {
 		keys = append(keys, k)
 	}
@@ -267,7 +269,7 @@ func (p *tPartition[V]) String() string {
 
 	var builder strings.Builder
 	for _, k := range keys {
-		builder.WriteString(fmt.Sprintf("%q: '%v'\n", k, kvMap[k]))
+		builder.WriteString(fmt.Sprintf("%v: '%v'\n", k, kvMap[k]))
 	}
 
 	return builder.String()
@@ -276,35 +278,35 @@ func (p *tPartition[V]) String() string {
 // ---------------------------------------------------------------------------
 // `TPartitionMap` constructor:
 
-// `New()` creates and initialises a new partition map.
+// `New()` creates and initialises a new partitioned map instance.
 //
-// This function is a constructor that returns a pointer to a new
-// `TPartitionMap` instance with the specified value type.
+// This is a constructor function that returns a pointer to a new
+// `TPartitionMap` instance with the specified key and value types.
 //
-// The returned partition map is initialised with the predefined number
-// of partitions (64), but the actual partition instances are created
+// The returned partitioned map is initialised with the predefined number
+// of partitions (128), but the actual partition instances are created
 // lazily when needed.
 //
 // Example usage:
 //
-//	pm := New[string]()
+//	pm := New[string, string]()
 //	pm.Put("key1", "value1")
 //	value, exists := pm.Get("key1")
 //
 // Returns:
-//   - `*TPartitionMap[V]`: A pointer to a newly created partition map.
-func New[V any]() *TPartitionMap[V] {
+//   - `*TPartitionMap[K, V]`: A pointer to a newly created partitioned map.
+func New[K cmp.Ordered, V any]() *TPartitionMap[K, V] {
 	// Unfortunately, Go doesn't support the use of sparse arrays
 	// (i.e. slices). That forces us to initialise the whole list
-	// at once. With 64 possible values/indices that takes 512 bytes.
+	// at once. With 128 possible values/indices that takes 1024 bytes.
 	//
 	// An empty map is allocated with enough space to hold the
 	// specified number of elements.
-	result := &TPartitionMap[V]{
-		tPartitionList: make(tPartitionList[V], numberOfPartitionsInMap),
+	result := &TPartitionMap[K, V]{
+		tPartitionList: make(tPartitionList[K, V], numberOfPartitionsInMap),
 	}
 
-	// Leave the partitions to lazy/late initialisation;
+	// Leave the partition instances to lazy/late initialisation;
 	// see `TPartitionMap.partition()`.
 
 	return result
@@ -328,21 +330,61 @@ var (
 //   - `aKey`: The key for which the partition index is to be computed.
 //
 // Returns:
-//   - `uint32`: The partition index to use for the given key.
-func partitionIndex(aKey string) (rIdx uint32) {
+//   - `uint8`: The partition index to use for the given key.
+func partitionIndex[K cmp.Ordered](aKey K) uint8 {
+	var (
+		uintKey uint64
+		key     []byte
+	)
+
+	switch val := any(aKey).(type) {
+	case int: // negative values would turn into a modulo == 0
+		uintKey = uint64(val)
+	case int8:
+		uintKey = uint64(val)
+	case int16:
+		uintKey = uint64(val)
+	case int32:
+		uintKey = uint64(val)
+	case int64:
+		uintKey = uint64(val)
+	case uint:
+		uintKey = uint64(val)
+	case uint8:
+		uintKey = uint64(val)
+	case uint16:
+		uintKey = uint64(val)
+	case uint32:
+		uintKey = uint64(val)
+	case uint64:
+		uintKey = val
+	case uintptr:
+		uintKey = uint64(val)
+	case float32:
+		key = []byte(strconv.FormatFloat(float64(val), 'f', -1, 32))
+	case float64:
+		key = []byte(strconv.FormatFloat(val, 'f', -1, 64))
+	case string:
+		key = []byte(val)
+	default:
+		key = fmt.Appendf(nil, "%v", aKey)
+	} // switch
+
+	if 0 < uintKey {
+		return uint8(uintKey % numberOfPartitionsInMap) //#nosec G115
+	}
+
 	// We use CRC32 for speed and adequate distribution.
 	// While it's not cryptographically secure, it's perfect for our
 	// partitioning needs.
 	// If two different keys hash to the same partition, they'll
 	// simply share a partition.
 
-	cs32 := crc32.Checksum([]byte(aKey), gCrc32Table)
-	rIdx = cs32 % numberOfPartitionsInMap
-
-	return
+	cs32 := crc32.Checksum(key, gCrc32Table)
+	return uint8(cs32 % numberOfPartitionsInMap)
 } // partitionIndex()
 
-// `partition()` retrieves a partition from the partition map based
+// `partition()` retrieves a partition from the partitioned map based
 // on the provided key.
 //
 // If the partition already exists, it is returned along with a boolean
@@ -359,9 +401,9 @@ func partitionIndex(aKey string) (rIdx uint32) {
 //   - `aCreate`: A boolean value indicating whether a new partition for the given key should be created if it doesn't exist yet.
 //
 // Returns:
-//   - `*tPartition[V]`: The partition associated with the provided key, or `nil` if the partition does not exist and `aCreate` is `false`.
+//   - `*tPartition[K, V]`: The partition associated with the provided key, or `nil` if the partition does not exist and `aCreate` is `false`.
 //   - `bool`: A boolean value indicating whether the partition was successfully retrieved.
-func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V], bool) {
+func (pm *TPartitionMap[K, V]) partition(aKey K, aCreate bool) (*tPartition[K, V], bool) {
 	if nil == pm {
 		return nil, false
 	}
@@ -380,7 +422,7 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 	}
 
 	// Here we do the lazy initialisation of the required `tPartition`:
-	p = newPartition[V]()
+	p = newPartition[K, V]()
 	pm.Lock()
 	(pm.tPartitionList)[idx] = p
 	pm.Unlock()
@@ -397,11 +439,11 @@ func (pm *TPartitionMap[V]) partition(aKey string, aCreate bool) (*tPartition[V]
 // `D`: delete == Delete()
 //
 
-// `Clear()` removes all key/value pairs from the partition map.
+// `Clear()` removes all key/value pairs from the partitioned map.
 //
 // Returns:
-//   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
-func (pm *TPartitionMap[V]) Clear() *TPartitionMap[V] {
+//   - `*TPartitionMap[K, V]`: The partitioned map itself, allowing method chaining.
+func (pm *TPartitionMap[K, V]) Clear() *TPartitionMap[K, V] {
 	if nil == pm {
 		return nil
 	}
@@ -415,14 +457,14 @@ func (pm *TPartitionMap[V]) Clear() *TPartitionMap[V] {
 	return pm
 } // Clear()
 
-// `Delete()` removes a key/value pair from the partition map.
+// `Delete()` removes a key/value pair from the partitioned map.
 //
 // Parameters:
 //   - `aKey`: The key of the key/value pair to be deleted.
 //
 // Returns:
-//   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
-func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
+//   - `*TPartitionMap[K, V]`: The partitioned map itself, allowing method chaining.
+func (pm *TPartitionMap[K, V]) Delete(aKey K) *TPartitionMap[K, V] {
 	if nil == pm {
 		return nil
 	}
@@ -435,14 +477,14 @@ func (pm *TPartitionMap[V]) Delete(aKey string) *TPartitionMap[V] {
 } // Delete()
 
 // `ForEach()` executes the provided function for each key/value pair
-// in the partition map.
+// in the partitioned map.
 //
 // Parameters:
 //   - `aFunc`: The function to execute for each key/value pair.
 //
 // Returns:
-//   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
-func (pm *TPartitionMap[V]) ForEach(aFunc func(aKey string, aValue V)) *TPartitionMap[V] {
+//   - `*TPartitionMap[K, V]`: The partitioned map itself, allowing method chaining.
+func (pm *TPartitionMap[K, V]) ForEach(aFunc func(aKey K, aValue V)) *TPartitionMap[K, V] {
 	if nil == pm {
 		return nil
 	}
@@ -456,9 +498,9 @@ func (pm *TPartitionMap[V]) ForEach(aFunc func(aKey string, aValue V)) *TPartiti
 	return pm
 } // ForEach()
 
-// `Get()` retrieves a key/value pair from the partition map.
+// `Get()` retrieves a key/value pair from the partitioned map.
 //
-// If the partition map contains a key/value pair with the specified key,
+// If the partitioned map contains a key/value pair with the specified key,
 // the function returns the associated value and a boolean value indicating
 // whether the key was found. If the key is not found, the function returns
 // the zero value of type V and a boolean value of false.
@@ -469,7 +511,7 @@ func (pm *TPartitionMap[V]) ForEach(aFunc func(aKey string, aValue V)) *TPartiti
 // Returns:
 //   - `V`: The value associated with the key (if found).
 //   - `bool`: Indicating for whether the key was found.
-func (pm *TPartitionMap[V]) Get(aKey string) (V, bool) {
+func (pm *TPartitionMap[K, V]) Get(aKey K) (V, bool) {
 	var zeroVal V
 	if nil == pm {
 		return zeroVal, false
@@ -483,7 +525,7 @@ func (pm *TPartitionMap[V]) Get(aKey string) (V, bool) {
 } // Get()
 
 // `GetOrDefault()` retrieves a value for the given key, or returns
-// the given default value if the key doesn't exist in the partition map.
+// the given default value if the key doesn't exist in the partitioned map.
 //
 // Parameters:
 //   - `aKey`: The key to look up.
@@ -491,7 +533,7 @@ func (pm *TPartitionMap[V]) Get(aKey string) (V, bool) {
 //
 // Returns:
 //   - `V`: The value associated with `aKey`, or `aDefault` if not found.
-func (pm *TPartitionMap[V]) GetOrDefault(aKey string, aDefault V) V {
+func (pm *TPartitionMap[K, V]) GetOrDefault(aKey K, aDefault V) V {
 	if nil != pm {
 		if result, ok := pm.Get(aKey); ok {
 			return result
@@ -501,18 +543,18 @@ func (pm *TPartitionMap[V]) GetOrDefault(aKey string, aDefault V) V {
 	return aDefault
 } // GetOrDefault()
 
-// `Keys()` returns a slice of all keys in the partition map.
+// `Keys()` returns a slice of all keys in the partitioned map.
 //
-// The partition map is divided into multiple partitions, each holding
+// The partitioned map is divided into multiple partitions, each holding
 // a subset of the keys. This method retrieves the keys from all
 // partitions and returns them in a sorted slice.
 //
 // The returned slice is a copy of the keys from all partitions, sorted
 // in ascending order.
 //
-// Return:
-//   - `[]string`: A slice of all the keys in the current partition map.
-func (pm *TPartitionMap[V]) Keys() []string {
+// Returns:
+//   - `[]K`: A slice of all the keys in the current partitioned map.
+func (pm *TPartitionMap[K, V]) Keys() []K {
 	if nil == pm {
 		return nil
 	}
@@ -525,10 +567,11 @@ func (pm *TPartitionMap[V]) Keys() []string {
 	pm.RUnlock()
 
 	if 0 == totalKeys {
-		return []string{}
+		// No point in wasting time and resources ...
+		return []K{}
 	}
 
-	result := make([]string, 0, totalKeys)
+	result := make([]K, 0, totalKeys)
 
 	// Collect all keys
 	pm.RLock()
@@ -544,11 +587,11 @@ func (pm *TPartitionMap[V]) Keys() []string {
 	return result
 } // Keys()
 
-// `Len()` returns the total number of key/value pairs in the partition map.
+// `Len()` returns the total number of key/value pairs in the partitioned map.
 //
 // Returns:
-//   - `rLen int`: The number of all key/value pairs in the partition map.
-func (pm *TPartitionMap[V]) Len() (rLen int) {
+//   - `rLen`: The number of all key/value pairs in the partitioned map.
+func (pm *TPartitionMap[K, V]) Len() (rLen int) {
 	if nil == pm {
 		return
 	}
@@ -562,16 +605,71 @@ func (pm *TPartitionMap[V]) Len() (rLen int) {
 	return
 } // Len()
 
-// `Put()` stores a key/value pair into the partition map.
+type (
+	// `TMetrics` provides statistics about the partition usage.
+	//
+	// `Parts` is the number of partitions that are actually in use.
+	// `Keys` is the total number of keys across all partitions.
+	// `Avg` is the average number of keys per partition.
+	// `PartKeys` is a map where the key is the partition index and the
+	// value is the number of keys in that partition.
+	TMetrics struct {
+		Parts    int
+		Keys     int
+		Avg      int
+		PartKeys map[int]int
+	}
+)
+
+// `PartitionStats()` returns statistics about the partition usage.
+//
+// This method returns information about how many partitions are actually
+// in use, how many keys are distributed across the partitions, and how
+// many key/value pairs are stored in each partition.
+// This can be useful for monitoring and optimising the distribution
+// of keys across partitions.
+//
+// Returns:
+//   - `*TMetrics`: A pointer to a `TMetrics` instance containing the statistics.
+func (pm *TPartitionMap[K, V]) PartitionStats() *TMetrics {
+	if nil == pm {
+		return nil
+	}
+
+	pLen := 0
+	result := &TMetrics{
+		PartKeys: make(map[int]int),
+	}
+
+	pm.RLock()
+	for idx, p := range pm.tPartitionList {
+		if nil != p {
+			result.Parts++
+			pLen = p.len()
+			result.Keys += pLen
+			result.PartKeys[idx] = pLen
+		}
+	}
+	pm.RUnlock()
+
+	if (0 == result.Parts) || (0 == result.Keys) {
+		return result
+	}
+	result.Avg = result.Keys / result.Parts
+
+	return result
+} // PartitionStats()
+
+// `Put()` stores a key/value pair into the partitioned map.
 // If the key already exists, it will be updated.
 //
 // Parameters:
-//   - `aKey`: The key to be put into the partition map.
+//   - `aKey`: The key to be put into the partitioned map.
 //   - `aValue`: The value associated with the key.
 //
 // Returns:
-//   - `*TPartitionMap[V]`: The partition map itself, allowing method chaining.
-func (pm *TPartitionMap[V]) Put(aKey string, aValue V) *TPartitionMap[V] {
+//   - `*TPartitionMap[K, V]`: The partitioned map itself, allowing method chaining.
+func (pm *TPartitionMap[K, V]) Put(aKey K, aValue V) *TPartitionMap[K, V] {
 	if nil == pm {
 		return nil
 	}
@@ -590,9 +688,9 @@ func (pm *TPartitionMap[V]) Put(aKey string, aValue V) *TPartitionMap[V] {
 //
 // The keys in returned string are sorted in ascending order.
 //
-// Return:
-//   - `string`: A string representation of the partition map.
-func (pm *TPartitionMap[V]) String() string {
+// Returns:
+//   - `string`: A string representation of the partitioned map.
+func (pm *TPartitionMap[K, V]) String() string {
 	if nil == pm {
 		return ""
 	}
@@ -607,30 +705,39 @@ func (pm *TPartitionMap[V]) String() string {
 	return builder.String()
 } // String()
 
-// `Values()` returns a slice of all values in the partition map.
+// `Values()` returns a slice of all values in the partitioned map.
 //
-// The partition map is divided into multiple partitions, each holding
+// The partitioned map is divided into multiple partitions, each holding
 // a subset of the values. This method retrieves the values from all
 // partitions and returns them in a slice.
 //
 // The order of values in the returned slice corresponds to the order
 // of keys returned by the `Keys()` method.
 //
-// Return:
-//   - `[]V`: A slice of all the values in the current partition map.
-func (pm *TPartitionMap[V]) Values() []V {
+// Returns:
+//   - `[]V`: A slice of all the values in the current partitioned map.
+func (pm *TPartitionMap[K, V]) Values() []V {
 	if nil == pm {
 		return nil
 	}
+	var (
+		ok  bool
+		p   *tPartition[K, V]
+		val V
+	)
+
+	// No locking, as `Keys()` and `partition()` are already thread-safe.
 
 	keys := pm.Keys()
 	result := make([]V, 0, len(keys))
 
 	for _, key := range keys {
-		if val, ok := pm.Get(key); ok {
-			result = append(result, val)
+		if p, ok = pm.partition(key, false); ok {
+			if val, ok = p.get(key); ok {
+				result = append(result, val)
+			}
 		}
-	}
+	} // for key
 
 	return result
 } // Values()

@@ -27,11 +27,11 @@ This is a `Go` package that implements a _partitioned data structure_ for storin
 
 - Using a partitioning strategy with CRC32 hashing to distribute keys across multiple partitions,
 - thread-safe implementation with mutex locks for concurrent data access,
-- generic implementation supporting any value type,
+- generic implementation supporting any key and value types,
 - designed for efficient concurrent access by reducing lock contention,
 - implements standard map operations (`Get`, `Put`, `Delete`, etc.).
 
-The package is designed to provide better performance than a standard map when used in highly concurrent environments by sharding the data across multiple partitions.
+The package is designed to provide better performance than a standard map when used in highly concurrent environments by distributing the data across multiple partitions.
 
 ## Installation
 
@@ -51,8 +51,8 @@ You can use `Go` to install this package for you:
 	)
 
 	func main() {
-		// Create a new partition map for string values
-		pm := partitionmap.New[string]()
+		// Create a new partition map with string keys and string values
+		pm := partitionmap.New[string, string]()
 
 		// Store key-value pairs
 		pm.Put("user1", "John Doe")
@@ -85,10 +85,10 @@ You can use `Go` to install this package for you:
 
 ### Key Features
 
-1. Generic Implementation: Works with any value type using Go generics.
+1. Generic Implementation: Works with any key and value types using `Go` generics.
 
-		intMap := partitionmap.New[int]()
-		structMap := partitionmap.New[MyStruct]()
+		intMap := partitionmap.New[string, int]()
+		structMap := partitionmap.New[int, MyStruct]()
 
 2. Thread-Safety: All operations are thread-safe, making it suitable for concurrent access.
 
